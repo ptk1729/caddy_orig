@@ -4,8 +4,8 @@ on:
   push:
 
 permissions:
-  contents: read          # needed for the commits API
-  id-token: write         # not strictly needed but often useful
+  contents: read
+  id-token: write         
 
 jobs:
   opa:
@@ -14,15 +14,12 @@ jobs:
       GO111MODULE: "on"
 
     steps:
-      # 1. checkout
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2. Go
       - uses: actions/setup-go@v5
         with: { go-version: "1.22" }
 
-      # 3. run tests + gather coverage in JSON
       - name: Test and build full coverage JSON
         shell: bash
         run: |
@@ -84,11 +81,9 @@ jobs:
         
     
 
-      # 4. install OPA
       - uses: open-policy-agent/setup-opa@v2
         with: { version: "latest" }
 
-      # 5. build one input file for OPA
       - name: Compose input.json
         run: |
           jq -n \
@@ -100,13 +95,11 @@ jobs:
             > input.json
 
 
-      # 6. evaluate policy (fails job if allow=false)
       - name: OPA policy check
         run: |
           opa eval --fail-defined \
             -i input.json -d policies 'data.ci.allow'
 
-      # 7. upload artefacts for later viewing
       - uses: actions/upload-artifact@v4
         with:
           name: reports

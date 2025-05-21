@@ -1,0 +1,73 @@
+name: checks
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  run-all:
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: "on"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      # 1. get the code
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # needed for full commit list
+
+      # 2. Go toolchain
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # 3. basic tools + OPA
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq gnupg curl
+          curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x opa
+          sudo mv opa /usr/local/bin/opa
+
+      # 4. make the coverage script write in-repo JSON
+      - name: Patch coverage script path
+        run: |
+          sed -i 's|^JSON_FILE=.*|JSON_FILE="$GITHUB_WORKSPACE/tests/coverage-summary.json"|' \
+            tests/find_coverage.sh
+
+      # 5. run unit tests and build clean coverage JSON
+      - name: Run coverage script
+        run: bash tests/find_coverage.sh
+
+      # 6. enforce coverage ≥ threshold with OPA
+      - name: Check coverage policy
+        run: |
+          opa eval --fail-defined \
+            -i tests/coverage-summary.json \
+            -d tests/policy.rego 'data.coverage.allow'
+
+      # 7. build verify.log (pull keys, test each commit)
+      - name: Verify commit signatures
+        run: bash commit_step/verify_all.sh .
+
+      # 8. fail if any commit is unverified
+      - name: Check commit policy
+        run: |
+          # make find_unverified.sh exit non-zero when it finds bad commits
+          sed -i 's|opa eval -f pretty|opa eval --fail-defined -f pretty|' \
+            commit_step/find_unverified.sh
+          bash commit_step/find_unverified.sh ./verify.log
+
+      # 9. keep the reports
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            tests/coverage-summary.json
+            verify.log

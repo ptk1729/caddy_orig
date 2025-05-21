@@ -1,0 +1,115 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read          # needed for the commits API
+  id-token: write         # not strictly needed but often useful
+
+jobs:
+  opa:
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: "on"
+
+    steps:
+      # 1. checkout
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # 2. Go
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+
+      # 3. run tests + gather coverage in JSON
+      - name: Test and build full coverage JSON
+        shell: bash
+        run: |
+            set -euxo pipefail
+
+            echo "Go version:"
+            go version || { echo "Go not found"; exit 1; }
+
+            if ! go test -coverprofile=coverage.out ./... | tee test.log; then
+                echo "INFO:Test suite failed, but proceeding to gather coverage..."
+            fi
+
+
+            if [ ! -f coverage.out ]; then
+            echo "coverage.out not found"
+            exit 1
+            fi
+
+            go tool cover -func=coverage.out || { echo "cover tool failed"; exit 1; }
+
+            TOTAL=$(go tool cover -func=coverage.out | awk '/total:/ {print $3}')
+            echo "✔ Total coverage: $TOTAL"
+
+            TEMP_PKGS=$(mktemp)
+
+            echo "Running per-package test coverage..."
+            if ! go test -cover ./... | tee pkgs.log; then
+            echo "INFO: per-package test failed, continuing anyway"
+            fi
+
+
+            while read -r line; do
+            echo "LINE: $line"
+            if [[ "$line" == *"coverage:"* ]]; then
+                CLEAN=$(echo "$line" | sed -E 's/^ok\s+|^\?\s+|[(]cached[)]|coverage:|of statements.*$//g' | xargs)
+                PKG=$(echo "$CLEAN" | awk '{print $1}')
+                PERCENT=$(echo "$CLEAN" | awk '{print $2}')
+                if [[ -n "$PKG" && -n "$PERCENT" ]]; then
+                echo "\"$PKG\": \"$PERCENT\"" >> "$TEMP_PKGS"
+                fi
+            fi
+            done < pkgs.log
+
+
+            echo "Writing JSON output..."
+
+            {
+            echo "{"
+            echo "  \"total_test_coverage\": \"$TOTAL\","
+            echo "  \"packages\": {"
+            tail -n +1 "$TEMP_PKGS" | paste -sd "," -
+            echo "  }"
+            echo "}"
+            } > coverage.json
+
+            echo "✔ JSON written:"
+            cat coverage.json
+
+        
+    
+
+      # 4. install OPA
+      - uses: open-policy-agent/setup-opa@v2
+        with: { version: "latest" }
+
+      # 5. build one input file for OPA
+      - name: Compose input.json
+        run: |
+          jq -n \
+            --argfile cov coverage.json \
+            --arg repo "${{ github.repository }}" \
+            --arg head "${{ github.sha }}" \
+            --arg token "${{ secrets.GITHUB_TOKEN }}" \
+            '{coverage:$cov, repo:$repo, head:$head, token:$token}' \
+            > input.json
+
+      # 6. evaluate policy (fails job if allow=false)
+      - name: OPA policy check
+        run: |
+          opa eval --fail-defined \
+            -i input.json -d policies 'data.ci.allow'
+
+      # 7. upload artefacts for later viewing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            coverage.json

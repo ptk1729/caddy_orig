@@ -2,8 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
+    branches:
+      - master
+      - 2.*
 
 permissions:
   contents: read          # needed for the commits API

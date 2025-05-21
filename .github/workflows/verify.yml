@@ -3,8 +3,7 @@ name: ci
 on:
   push:
     branches:
-      - master
-      - '2.*'
+      - 2.7
 
 permissions:
   contents: read          # needed for the commits API

@@ -92,12 +92,13 @@ jobs:
       - name: Compose input.json
         run: |
           jq -n \
-            --argfile cov coverage.json \
-            --arg repo "${{ github.repository }}" \
-            --arg head "${{ github.sha }}" \
-            --arg token "${{ secrets.GITHUB_TOKEN }}" \
+            --argjson cov "$(cat coverage.json)" \
+            --arg repo "$repo" \
+            --arg head "$head" \
+            --arg token "$token" \
             '{coverage:$cov, repo:$repo, head:$head, token:$token}' \
             > input.json
+
 
       # 6. evaluate policy (fails job if allow=false)
       - name: OPA policy check

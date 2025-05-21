@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - master
-      - 2.*
+      - '2.*'
 
 permissions:
   contents: read          # needed for the commits API
